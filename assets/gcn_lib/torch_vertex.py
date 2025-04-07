@@ -98,7 +98,7 @@ class HypergraphConv2d(nn.Module):
         eps_init = 0.0
         self.eps = nn.Parameter(torch.Tensor([eps_init]))
 
-    def forward(self, x, edge_index, y=None, hyperedge_matrix, point_hyperedge_index, centers):
+    def forward(self, x, edge_index, hyperedge_matrix, point_hyperedge_index, centers, y=None):
         with torch.no_grad():
             # Check and append dummy node to x if not present
             if not torch.equal(x[:, :, -1, :], torch.zeros((x.size(0), x.size(1), 1, x.size(3)), device=x.device)): # 假设 n_dims = 128, n_points = 3136, hyperedge_num = 50
