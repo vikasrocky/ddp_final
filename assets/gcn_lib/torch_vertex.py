@@ -99,32 +99,23 @@ class HypergraphConv2d(nn.Module):
         self.eps = nn.Parameter(torch.Tensor([eps_init]))
 
     def forward(self, x, edge_index, hyperedge_matrix, point_hyperedge_index, centers, y=None):
-        with torch.no_grad():
-            # Check and append dummy node to x if not present
-            if not torch.equal(x[:, :, -1, :], torch.zeros((x.size(0), x.size(1), 1, x.size(3)), device=x.device)): # 假设 n_dims = 128, n_points = 3136, hyperedge_num = 50
-                dummy_node = torch.zeros((x.size(0), x.size(1), 1, x.size(3)), device=x.device)
-                x = torch.cat([x, dummy_node], dim=2) # (1, 128, 3137, 1)
-            
-            # Check and append dummy hyperedge to centers if not present
-            if not torch.equal(centers[:, :, -1], torch.zeros((centers.size(0), centers.size(1), 1), device=centers.device)):
-                dummy_hyperedge = torch.zeros((centers.size(0), centers.size(1), 1), device=centers.device)
-                centers = torch.cat([centers, dummy_hyperedge], dim=2) # centers: (1, 128, 51)
-
-        # Step 1: Aggregate node features to get hyperedge features
-        node_features_for_hyperedges = batched_index_select(x, hyperedge_matrix)
-        aggregated_hyperedge_features, _ = node_features_for_hyperedges.sum(dim=-1, keepdim=True)
-        aggregated_hyperedge_features = self.nn_node_to_hyperedge(aggregated_hyperedge_features.squeeze(-1)) # (1, 128, 50)
-        # Adding the hyperedge center features to the aggregated hyperedge features
-        aggregated_hyperedge_features += (1 + self.eps) * centers[:, :, :-1, :]
-        
-        # Step 2: Aggregate hyperedge features to update node features
-        hyperedge_features_for_nodes = batched_index_select(aggregated_hyperedge_features.unsqueeze(-1), point_hyperedge_index)
-        aggregated_node_features_from_hyperedges = self.nn_hyperedge_to_node(hyperedge_features_for_nodes.sum(dim=-1, keepdim=True).squeeze(-1))
-
-        # Update original node features
-        out = aggregated_node_features_from_hyperedges
-
-        return out
+    B, C, N, _ = x.shape
+    
+    # Node to Hyperedge
+    node_features = batched_index_select(x, hyperedge_matrix)  # [B,C,num_hyperedges,k]
+    hyperedge_feats = self.nn_node_to_hyperedge(node_features.sum(-1))  # [B,C,num_hyperedges]
+    
+    # Add center features if available
+    if centers is not None:
+        hyperedge_feats = hyperedge_feats + (1 + self.eps) * centers[:, :, :-1]
+    
+    # Hyperedge to Node
+    node_feats = batched_index_select(
+        hyperedge_feats.unsqueeze(-1),  # [B,C,num_hyperedges,1]
+        point_hyperedge_index.unsqueeze(1)  # [B,1,N]
+    )  # [B,C,N,num_hyperedges_per_node]
+    
+    return self.nn_hyperedge_to_node(node_feats.sum(-1))  # [B,C,N,1]
 
 
 class GraphConv2d(nn.Module):
@@ -171,22 +162,30 @@ class DyGraphConv2d(GraphConv2d):
             self.graph_constructor = DenseDilatedKnnGraph(kernel_size, dilation, stochastic, epsilon)
 
     def forward(self, x, relative_pos=None):
-        B, C, H, W = x.shape
-        y = None
-        if self.r > 1:
-            y = F.avg_pool2d(x, self.r, self.r)
-            y = y.reshape(B, C, -1, 1).contiguous()            
-        x = x.reshape(B, C, -1, 1).contiguous()
-        
-        # Construct graph using either hypergraph or dilated knn graph based on use_hypergraph flag
-        if self.use_hypergraph:
-            hyperedge_matrix, point_hyperedge_index, centers = construct_hyperedges(x, num_clusters=self.k)
-            x = super(DyGraphConv2d, self).forward(x, edge_index=None, y=y,hyperedge_matrix=hyperedge_matrix, point_hyperedge_index=point_hyperedge_index, centers=centers)
-        else:
-            edge_index = self.graph_constructor(x, y, relative_pos)
-            x = super(DyGraphConv2d, self).forward(x, edge_index, y=y)
-        
-        return x.reshape(B, -1, H, W).contiguous()
+    B, C, H, W = x.shape
+    x_flat = x.view(B, C, -1, 1)  # [B,C,N,1]
+    
+    if self.use_hypergraph:
+        hyperedge_matrix, point_idx, centers = construct_hyperedges(x_flat, self.k)
+        # Ensure proper batch dimensions
+        if hyperedge_matrix.dim() == 2:
+            hyperedge_matrix = hyperedge_matrix.unsqueeze(0).expand(B, -1, -1)
+        if point_idx.dim() == 1:
+            point_idx = point_idx.unsqueeze(0).expand(B, -1)
+        if centers.dim() == 2:
+            centers = centers.unsqueeze(0).expand(B, -1, -1)
+            
+        return super().forward(
+            x_flat,
+            edge_index=None,
+            hyperedge_matrix=hyperedge_matrix,
+            point_hyperedge_index=point_idx,
+            centers=centers
+        ).view(B, -1, H, W)
+    else:
+        # Original graph case
+        edge_index = self.graph_constructor(x_flat, None, relative_pos)
+        return super().forward(x_flat, edge_index).view(B, -1, H, W)
 
 
 class Grapher(nn.Module):
