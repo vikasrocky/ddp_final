@@ -98,7 +98,7 @@ class HypergraphConv2d(nn.Module):
         eps_init = 0.0
         self.eps = nn.Parameter(torch.Tensor([eps_init]))
 
-    def forward(self, x, hyperedge_matrix, point_hyperedge_index, centers):
+    def forward(self, x, edge_index, y=None, hyperedge_matrix, point_hyperedge_index, centers):
         with torch.no_grad():
             # Check and append dummy node to x if not present
             if not torch.equal(x[:, :, -1, :], torch.zeros((x.size(0), x.size(1), 1, x.size(3)), device=x.device)): # 假设 n_dims = 128, n_points = 3136, hyperedge_num = 50
@@ -181,7 +181,7 @@ class DyGraphConv2d(GraphConv2d):
         # Construct graph using either hypergraph or dilated knn graph based on use_hypergraph flag
         if self.use_hypergraph:
             hyperedge_matrix, point_hyperedge_index, centers = construct_hyperedges(x, num_clusters=self.k)
-            x = super(DyGraphConv2d, self).forward(x,  edge_index=None, hyperedge_matrix=hyperedge_matrix, point_hyperedge_index=point_hyperedge_index, centers=centers, y=y)
+            x = super(DyGraphConv2d, self).forward(x, edge_index=None, y=y,hyperedge_matrix=hyperedge_matrix, point_hyperedge_index=point_hyperedge_index, centers=centers)
         else:
             edge_index = self.graph_constructor(x, y, relative_pos)
             x = super(DyGraphConv2d, self).forward(x, edge_index, y=y)
