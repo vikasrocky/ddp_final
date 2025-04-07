@@ -181,7 +181,7 @@ class DyGraphConv2d(GraphConv2d):
         # Construct graph using either hypergraph or dilated knn graph based on use_hypergraph flag
         if self.use_hypergraph:
             hyperedge_matrix, point_hyperedge_index, centers = construct_hyperedges(x, num_clusters=self.k)
-            x = super(DyGraphConv2d, self).forward(x, hyperedge_matrix=hyperedge_matrix, point_hyperedge_index=point_hyperedge_index, centers=centers, y=y)
+            x = super(DyGraphConv2d, self).forward(x,  edge_index=None, hyperedge_matrix=hyperedge_matrix, point_hyperedge_index=point_hyperedge_index, centers=centers, y=y)
         else:
             edge_index = self.graph_constructor(x, y, relative_pos)
             x = super(DyGraphConv2d, self).forward(x, edge_index, y=y)
