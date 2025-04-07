@@ -79,27 +79,24 @@ class BasicConv(Seq):
 
 
 def batched_index_select(x, idx):
-    r"""fetches neighbors features from a given neighbor idx
-
-    Args:
-        x (Tensor): input feature Tensor
-                :math:`\mathbf{X} \in \mathbb{R}^{B \times C \times N \times 1}`.
-        idx (Tensor): edge_idx
-                :math:`\mathbf{X} \in \mathbb{R}^{B \times N \times l}`.
-    Returns:
-        Tensor: output neighbors features
-            :math:`\mathbf{X} \in \mathbb{R}^{B \times C \times N \times k}`.
-    """
-    # Replace -1s in idx with the index pointing to the dummy node/hyperedge
-    idx[idx == -1] = x.size(2) - 1  # Make sure this points to the last node/hyperedge which is the dummy one
-
-    batch_size, num_dims, num_vertices_reduced = x.shape[:3]
-    _, num_vertices, k = idx.shape
-    idx_base = torch.arange(0, batch_size, device=idx.device).view(-1, 1, 1) * num_vertices_reduced
-    idx = idx + idx_base
-    idx = idx.contiguous().view(-1)
-
-    x = x.transpose(2, 1)
-    feature = x.contiguous().view(batch_size * num_vertices_reduced, -1)[idx, :]
-    feature = feature.view(batch_size, num_vertices, k, num_dims).permute(0, 3, 1, 2).contiguous()
-    return feature
+    """Handle both graph and hypergraph cases with proper dummy node support"""
+    if len(x.shape) == 3:
+        x = x.unsqueeze(-1)
+    if len(idx.shape) == 2:
+        idx = idx.unsqueeze(0)
+    
+    # Handle dummy nodes (-1 indices)
+    idx = idx.clone()
+    dummy_pos = x.shape[2] - 1  # Last position is dummy
+    idx[idx < 0] = dummy_pos
+    
+    batch_size, num_dims = x.shape[0], x.shape[1]
+    num_vertices = x.shape[2]
+    num_selected, k = idx.shape[1], idx.shape[2]
+    
+    idx_base = torch.arange(0, batch_size, device=x.device).view(-1, 1, 1) * num_vertices
+    idx = (idx + idx_base).view(-1)
+    
+    x = x.transpose(2, 1).contiguous()
+    feature = x.view(batch_size * num_vertices, -1)[idx]
+    return feature.view(batch_size, num_selected, k, num_dims).permute(0, 3, 1, 2)
